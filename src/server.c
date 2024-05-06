@@ -3,6 +3,7 @@
 #include "../include/signaling.h"
 #include "../include/server.h"
 #include "../include/client_table.h"
+#include "../include/http.h"
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -17,6 +18,8 @@
 #define SERVER_BACKLOG 10
 #define SERVER_DATA_LENGTH 1024
 #define SERVER_INITIAL_CAPACITY 8
+#define SERVER_PUBLIC_DIR "../public"
+#define SERVER_ERROR_PAGE "../public/error.html"
 
 #define EPOLL_INFINITE -1
 #define EPOLL_MAX_EVENTS 64
@@ -216,6 +219,9 @@ void *get_in_adrr(struct sockaddr *adrr) {
 
 int handle_request(void *arg) {
     RequestContext *context = (RequestContext *)arg;
+    HttpRequest request;
+    int request_status = 0;
+    char path[1024];
 
     Server *server = context->server;
     Client *client = context->client;
@@ -240,14 +246,38 @@ int handle_request(void *arg) {
 
         return 0;
     }
-    
-    register_read_event_listener(server->epfd, client->socket);
+
+    request_status = http_request_parse(client->buffer, &request);
+
+    if (request_status != HTTP_PARSE_SUCCESSFUL) {
+        snprintf(path, sizeof path, SERVER_ERROR_PAGE);
+    } else {
+        snprintf(path, sizeof path, "%s%s", SERVER_PUBLIC_DIR, request.resource);
+    }
+
+    if (access(path, F_OK) != 0 && request_status == HTTP_PARSE_SUCCESSFUL) {
+        memset(path, 0, sizeof path);
+        snprintf(path, sizeof path, SERVER_ERROR_PAGE);
+    }
+
+    FILE *file = fopen(path, "r");
+    fread(client->buffer, client->buffer_size, client->buffer_size, file);
+    fclose(file);
 
     if (send(client->socket, client->buffer, client->buffer_size, 0) == -1) {
         perror("send");
     }
 
     free(arg);
+
+    if (request.version == HTTP09) {
+        close(client->socket);
+        client_table_remove(server->client_table, client->socket);
+    } else {
+        register_read_event_listener(server->epfd, client->socket);
+    }
+
+    free((char*)request.resource);
 
     return 0;
 }

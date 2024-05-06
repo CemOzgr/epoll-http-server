@@ -12,4 +12,5 @@ add_executable(MultiThreadedServer
     src/task_queue.c 
     src/thread_pool.c
     src/client_table.c
+    src/http.c
 )
